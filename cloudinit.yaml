@@ -1,0 +1,112 @@
+#cloud-config
+
+# 1. Core System Settings
+timezone: Asia/Tokyo
+locale: ja_JP.UTF-8
+keyboard:
+  layout: jp
+  # model: jp106 # Optional: uncomment if you need a specific model
+
+# 2. APT Package Management (Initial Update & Upgrade)
+# package_update: true will run 'apt update'
+# package_upgrade: true will run 'apt upgrade'
+package_update: true
+package_upgrade: true
+
+# 3. Software Installation
+packages:
+  # Desktop Environment & RDP
+  - ubuntu-desktop-minimal
+  - xrdp
+  # Language & Input Method
+  - language-pack-ja
+  - language-pack-gnome-ja
+  - ibus
+  - ibus-mozc
+  # Prerequisites for Azure CLI repo setup (if not already covered or minimal image)
+  - ca-certificates
+  - curl
+  - apt-transport-https
+  - lsb-release
+  - gnupg
+  - wget # Added as per your request for VS Code setup, though curl is used for the key
+  - git
+  - podman
+  # Azure CLI will be installed via runcmd due to complex repo setup,
+  # but listing its prerequisites here is good practice.
+  # If azure-cli were simpler to add via 'apt' module's sources, it would be here.
+  # VS Code will also be installed via runcmd.
+
+# 4. Commands to run (includes Azure CLI setup, further upgrades, config, cleanup)
+runcmd:
+  # Common Microsoft GPG Key Setup (for Azure CLI, VS Code, etc.)
+  - echo "Setting up Microsoft GPG key..."
+  - mkdir -p /etc/apt/keyrings # Ensure keyrings directory exists
+  - curl -sLS https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | tee /etc/apt/keyrings/microsoft.gpg > /dev/null
+  - chmod go+r /etc/apt/keyrings/microsoft.gpg # Ensure readable
+
+  # Setup Azure CLI repository
+  - echo "Setting up Azure CLI repository..."
+  - |
+    echo "Types: deb
+    URIs: https://packages.microsoft.com/repos/azure-cli/
+    Suites: $(lsb_release -cs)
+    Components: main
+    Architectures: $(dpkg --print-architecture)
+    Signed-by: /etc/apt/keyrings/microsoft.gpg" | tee /etc/apt/sources.list.d/azure-cli.sources
+
+  # Setup Visual Studio Code repository
+  - echo "Setting up Visual Studio Code repository..."
+  - |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | tee /etc/apt/sources.list.d/vscode.list
+
+  # Update package list after adding all new repositories
+  - echo "Updating package list after adding new repositories..."
+  - apt update -y
+
+  # Install Azure CLI
+  - echo "Installing Azure CLI..."
+  - apt install -y azure-cli
+
+  # Install Visual Studio Code
+  - echo "Installing Visual Studio Code..."
+  - apt install -y code
+
+  # Configuration for GDM (Wayland disable)
+  - echo "Configuring GDM..."
+  - sed -i 's/^#\s*WaylandEnable=false/WaylandEnable=false/' /etc/gdm3/custom.conf
+
+  # Configuration for XRDP (GNOME session variables)
+  - echo "Configuring XRDP startwm.sh..."
+  - sed -i '1s;^;export GNOME_SHELL_SESSION_MODE=ubuntu\nexport XDG_CURRENT_DESKTOP=ubuntu:GNOME\n;' /etc/xrdp/startwm.sh
+
+  # Enable XRDP service
+  - echo "Enabling XRDP service..."
+  - systemctl enable xrdp
+
+  # Perform full system upgrade (handles packages that 'apt upgrade' might hold back)
+  - echo "Performing apt full-upgrade..."
+  - apt full-upgrade -y
+
+  # Cleanup: Autoremove unused packages
+  - echo "Running apt autoremove..."
+  - apt autoremove -y
+
+  # Cleanup: Autoclean old package cache
+  - echo "Running apt autoclean..."
+  - apt autoclean -y
+
+  # Add locale settings to user's .bashrc (assuming default user 'ubuntu')
+  # If your default user is different, change '/home/ubuntu/' accordingly.
+  - echo "Adding locale exports to /home/azureuser/.bashrc..."
+  - echo 'export LANG=ja_JP.UTF-8' >> /home/azureuser/.bashrc
+  - echo 'export LANGUAGE="ja_JP:ja"' >> /home/azureuser/.bashrc
+  # Note: These .bashrc changes apply to new interactive shells for that user.
+  # System-wide locale is primarily handled by the 'locale: ja_JP.UTF-8' directive and language pack installation.
+
+# 5. Final Action: Reboot
+power_state:
+  mode: reboot
+  delay: "now" # Reboot immediately after cloud-init finishes
+  message: "System rebooting after full setup and configuration by cloud-init."
+  condition: True # Always reboot
